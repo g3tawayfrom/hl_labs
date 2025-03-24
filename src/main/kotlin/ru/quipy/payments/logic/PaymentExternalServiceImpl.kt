@@ -42,16 +42,7 @@ class PaymentExternalSystemAdapterImpl(
     private var rateLimiter: RateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val parallelRequests = properties.parallelRequests
 
-    private val executor: ExecutorService = Executors.newFixedThreadPool(parallelRequests, object : ThreadFactory {
-        private val threadCount = AtomicInteger(0)
-        override fun newThread(r: Runnable): Thread {
-            return Thread(r, "payment-worker-${threadCount.incrementAndGet()}").apply {
-                uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, e ->
-                    logger.error("Uncaught exception in thread ${Thread.currentThread().name}", e)
-                }
-            }
-        }
-    })
+    private val executor: ExecutorService = Executors.newFixedThreadPool(parallelRequests)
 
     private val client = OkHttpClient.Builder()
         .callTimeout(Duration.ofMillis(1300L))
