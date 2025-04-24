@@ -33,10 +33,17 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
+    // RateLimiter с алгоритмом "скользящего окна":
+    // - 10 запросов
+    // - Окно длительностью 1 секунда
+    // (Ограничивает частоту запросов к внешней системе)
     private var rateLimiter: RateLimiter = SlidingWindowRateLimiter(10, Duration.ofSeconds(1))
     private val parallelRequests = properties.parallelRequests
 
     private val client = OkHttpClient.Builder().build()
+    // Неблокирующее "окно" для контроля параллельных запросов:
+    // - Реализует семафороподобное поведение
+    // - Гарантирует не более parallelRequests одновременных запросов
     private val ongoingWindow = NonBlockingOngoingWindow(parallelRequests)
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -51,12 +58,19 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
+        // Блок получения "разрешения" на выполнение запроса:
+        // Цикл продолжается пока не получим место в "окне" параллельных запросов
+        // или не истечет deadline
         while (true) {
+            // Попытка занять "слот" для параллельного запроса
             val windowResponse = ongoingWindow.putIntoWindow()
+            // Успешное получение слота
             if (windowResponse is NonBlockingOngoingWindow.WindowResponse.Success) {
                 break
             }
-            // Thread.sleep(1)
+
+            // Проверка дедлайна:
+            // Если время вышло - логируем и прерываем выполнение
             if (System.currentTimeMillis() >= deadline) {
                 logger.warn("[$accountName] Parallel requests limit timeout for payment $paymentId. Aborting external call.")
                 paymentESService.update(paymentId) {
@@ -72,7 +86,12 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
+            // Ожидание разрешения от rate limiter'а:
+            // tick() возвращает true когда можно выполнить запрос
+            // в рамках ограничения RPS (Requests Per Second)
             while (!rateLimiter.tick()) {
+                // Пустая операция - активное ожидание
+                // На практике здесь можно добавить небольшую паузу
                 Unit
             }
             client.newCall(request).execute().use { response ->
