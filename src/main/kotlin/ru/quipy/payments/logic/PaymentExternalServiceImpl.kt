@@ -74,10 +74,20 @@ class PaymentExternalSystemAdapterImpl(
         try {
             while (!rateLimiter.tick()) { Unit }
 
-            if (now() + requestAverageProcessingTime.toMillis()  >= deadline) {
+            // Проверяем, если текущее время + среднее время обработки запроса превышает дедлайн
+            if (now() + requestAverageProcessingTime.toMillis() >= deadline) {
+                // Если условие выполняется (дедлайн будет превышен)
+                // Обновляем информацию о платеже через сервис paymentESService
                 paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                    // Записываем в лог информацию о неудачной обработке
+                    it.logProcessing(
+                        false,               // Успешность обработки - false
+                        now(),               // Текущая метка времени
+                        transactionId,       // Идентификатор транзакции
+                        reason = "Request timeout."  // Причина - превышение времени ожидания
+                    )
                 }
+                // Прекращаем дальнейшее выполнение
                 return
             }
 
