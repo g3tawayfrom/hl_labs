@@ -33,6 +33,8 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
+    // Создаем ограничитель запросов: 10 вызовов в секунду
+// SlidingWindowRateLimiter - реализация с "плавающим" окном
     private var rateLimiter: RateLimiter = SlidingWindowRateLimiter(10, Duration.ofSeconds(1))
     private val parallelRequests = properties.parallelRequests
 
@@ -72,8 +74,10 @@ class PaymentExternalSystemAdapterImpl(
         }.build()
 
         try {
+            // Ждем, пока rate limiter разрешит выполнить запрос
+            // tick() возвращает true, когда запрос можно выполнить
             while (!rateLimiter.tick()) {
-                Unit
+                Unit // Пустая операция (эквивалент busy-wait)
             }
             client.newCall(request).execute().use { response ->
                 val body = try {
