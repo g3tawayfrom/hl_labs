@@ -61,14 +61,6 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        if (System.currentTimeMillis() >= deadline) {
-            logger.warn("[$accountName] Parallel requests limit timeout for payment $paymentId. Aborting external call.")
-            paymentESService.update(paymentId) {
-                it.logSubmission(false, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-            }
-            return
-        }
-
         // Бесконечный цикл для получения "окна" в системе ограничения параллельных запросов
         while (true) {
             val windowResponse = ongoingWindow.putIntoWindow()
