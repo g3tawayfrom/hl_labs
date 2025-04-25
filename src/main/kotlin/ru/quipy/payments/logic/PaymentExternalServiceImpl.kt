@@ -42,6 +42,7 @@ class PaymentExternalSystemAdapterImpl(
     private var rateLimiter: RateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val parallelRequests = properties.parallelRequests
 
+    // Создание пула потоков фиксированного размера для обработки параллельных запросов
     private val executor: ExecutorService = Executors.newFixedThreadPool(parallelRequests)
 
     private val client = OkHttpClient.Builder()
