@@ -61,6 +61,14 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
+        if (System.currentTimeMillis() >= deadline) {
+            logger.warn("[$accountName] Parallel requests limit timeout for payment $paymentId. Aborting external call.")
+            paymentESService.update(paymentId) {
+                it.logSubmission(false, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+            }
+            return
+        }
+
         // Бесконечный цикл для получения "окна" в системе ограничения параллельных запросов
         while (true) {
             val windowResponse = ongoingWindow.putIntoWindow()
@@ -85,7 +93,8 @@ class PaymentExternalSystemAdapterImpl(
             .build()
 
 // Параметры для повторных попыток
-        val maxRetries = 1_000_000  // Максимальное число попыток (фактически бесконечность)
+        val delay = 1000L
+        val maxRetries = 3  // Максимальное число попыток
         var attempt = 0             // Счетчик попыток
         var success = false         // Флаг успешного выполнения
         var responseBody: ExternalSysResponse? = null  // Ответ внешней системы
@@ -143,6 +152,7 @@ class PaymentExternalSystemAdapterImpl(
                     attempt++
                     if (attempt < maxRetries) {
                         logger.warn("[$accountName] Attempt #$attempt failed with code ${e.code} for payment $paymentId. Retrying...", e)
+                        Thread.sleep(delay)
                     }
                 } catch (e: SocketTimeoutException) {
                     // Обработка таймаутов соединения
@@ -150,6 +160,7 @@ class PaymentExternalSystemAdapterImpl(
                     attempt++
                     if (attempt < maxRetries) {
                         logger.warn("[$accountName] Attempt #$attempt SocketTimeout for payment $paymentId. Retrying...", e)
+                        Thread.sleep(delay)
                     }
                 } catch (e: Exception) {
                     // Обработка непредвиденных ошибок
