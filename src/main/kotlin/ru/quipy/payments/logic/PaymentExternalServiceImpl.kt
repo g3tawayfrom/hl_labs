@@ -40,9 +40,10 @@ class PaymentExternalSystemAdapterImpl(
     private var rateLimiter: RateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder()
-        .callTimeout(Duration.ofMillis(1300L))
-        .build()
+    // Объявление приватного неизменяемого (val) свойства client
+    private val client = OkHttpClient.Builder()  // Создание билдера для конфигурации OkHttpClient
+        .callTimeout(Duration.ofMillis(1300L))   // Установка общего таймаута для всего вызова (запрос + обработка ответа) в 1300 миллисекунд
+        .build()                                // Создание экземпляра OkHttpClient с заданными настройками
 
     private val ongoingWindow = NonBlockingOngoingWindow(parallelRequests)
 
@@ -75,27 +76,37 @@ class PaymentExternalSystemAdapterImpl(
             .post(emptyBody)
             .build()
 
-        var delay = 1000L
-        var maxRetries = 10
-        var attempt = 0
+        // Начальные параметры для повторных попыток
+        var delay = 1000L  // начальная задержка между попытками (1 секунда)
+        var maxRetries = 10 // максимальное количество попыток
+        var attempt = 0     // счетчик текущей попытки
 
+        // Цикл повторных попыток
         while (attempt < maxRetries) {
             try {
+                // Ожидание разрешения от rateLimiter (ограничителя частоты запросов)
                 while (!rateLimiter.tick()) {
+                    // Проверка, не истекло ли время deadline (крайний срок выполнения)
                     if (now() + requestAverageProcessingTime.toMillis() >= deadline) {
-                        throw SocketTimeoutException()
+                        throw SocketTimeoutException() // Бросаем исключение, если время вышло
                     }
                 }
 
+                // Выполнение HTTP-запроса
                 client.newCall(request).execute().use { response ->
+                    // Парсинг тела ответа
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
+                        // Логирование ошибки парсинга
                         logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
                         ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                     }
+
+                    // Логирование результата обработки платежа
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
+                    // Если платеж успешен - обновляем статус и выходим
                     if (body.result) {
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
@@ -103,27 +114,34 @@ class PaymentExternalSystemAdapterImpl(
                         return
                     }
 
+                    // Обработка кодов ответа
                     when (response.code) {
+                        // Коды клиентских ошибок - бросаем исключение
                         400, 401, 403, 404, 405 -> {
                             throw RuntimeException("Client error code: ${response.code}")
                         }
+                        // Код серверной ошибки - сбрасываем задержку для немедленной повторной попытки
                         500 -> delay = 0
                     }
 
+                    // Увеличиваем счетчик попыток и делаем паузу перед следующей попыткой
                     attempt++
                     Thread.sleep(delay)
                 }
             } catch (e: SocketTimeoutException) {
+                // Обработка таймаута соединения
                 logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                 }
             } catch (e: Exception) {
+                // Обработка других исключений
                 logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
                 paymentESService.update(paymentId) {
                     it.logProcessing(false, now(), transactionId, reason = e.message)
                 }
             } finally {
+                // Освобождение ресурса (вероятно, семафора или чего-то подобного)
                 ongoingWindow.releaseWindow()
             }
         }
